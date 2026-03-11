@@ -9,16 +9,6 @@
 - Reinforce understanding of all course material (labs 1-6) through an evaluation benchmark.
 - Teach LLM API integration and tool calling as a transferable skill.
 
-## Design principles
-
-| Principle | Implication |
-|-----------|-------------|
-| Learn by debugging, not by one-shotting | Students iterate against a hidden benchmark. They see what fails, diagnose why, fix, re-run. |
-| Specify interfaces, not implementations | We define CLI input/output format, tool schemas, eval criteria. How they build the agent is their choice. |
-| Evaluate the agent, evaluate the student | The question bank tests both agent correctness AND student understanding of course material. |
-| Build on what exists | The agent operates on their deployed lab 5 system (backend, DB, frontend). No new infrastructure. |
-| Progressive difficulty | Basic questions need just an LLM. Tool questions need real implementations. Edge cases need iteration. |
-
 ## Learning outcomes
 
 By the end of this lab, students should be able to:
@@ -30,174 +20,116 @@ By the end of this lab, students should be able to:
 - [Analyze] Debug agent behavior by examining tool call traces, identifying prompt issues, and fixing tool implementations.
 - [Evaluate] Assess agent quality against a benchmark, iterating on prompts and tools to improve pass rate.
 
+In simple words:
+
+> 1. I can explain how an agent loop works — prompt, tool call, execute, feed back, repeat.
+> 2. I can call an LLM API with tool definitions and handle structured responses.
+> 3. I can build tools that read files, list directories, and query APIs, and wire them into an agent.
+> 4. I can build a CLI that takes a question and outputs a JSON answer.
+> 5. I can debug why my agent gives wrong answers by tracing tool calls and fixing prompts.
+> 6. I can iterate on my agent until it passes a benchmark, improving prompts and tools along the way.
+
 ## Lab story
 
-You have a running Learning Management Service from the previous lab — a backend, a database full of analytics data, and a frontend dashboard. The course is coming to a close and you need to review everything you've learned. Instead of manually reviewing, you'll build a CLI agent that can answer questions about the course and about your own system. The agent uses an LLM with tools to read your codebase and query your API.
+You have a running Learning Management Service from the previous lab — a backend, a database full of analytics data, and a frontend dashboard. The course is ending and you need to review everything you have learned. Instead of reviewing manually, you will build a CLI agent that answers questions about the course and about your own system, evaluated against a hidden benchmark — like building an algorithm against a test suite.
 
-An evaluation benchmark tests your agent with ~30 questions. You can't see the questions upfront — you discover them by running the checker. Each failed question tells you what went wrong, and you fix it. By the time your agent passes, you've reviewed the course material and understood how agents work.
+A senior engineer explains the assignment:
 
-## Architecture
-
-```
-Student's VM:
-  agent.py (CLI) ←→ OpenRouter API (free LLM)
-       │
-       ├── read_file(path)   → local filesystem
-       ├── list_files(dir)   → local filesystem
-       └── query_api(path)   → localhost:42002 (their deployed backend)
-
-Autochecker:
-  SSH → python agent.py '{"question":"..."}' → stdout JSON
-  Compare answer against expected → PASS/FAIL
-```
-
-## LLM access
-
-**Provider:** OpenRouter (free tier, zero cost)
-- Students create an account at openrouter.ai, get an API key (no credit card)
-- API is OpenAI-compatible: `POST https://openrouter.ai/api/v1/chat/completions`
-- Default model: `meta-llama/llama-3.3-70b-instruct:free` (128k ctx, tool calling)
-- 18+ free models support tool calling; students may switch
-
-**Alternatives considered and rejected:**
-- Shared API key: risk of leaks, hard to rate-limit per student
-- Student-provided keys: unequal access, cost barrier
-- Local models (Ollama): VM resources too limited, tool calling unreliable
-
-## Tool interface
-
-**Decision:** OpenAI-style function calling (industry standard).
-
-Students define tools as JSON schemas in the `tools` parameter of the API request. The LLM returns structured `tool_calls`. Students execute the tool, send the result back as a `tool` role message, and loop until the LLM gives a final text answer.
-
-**Alternatives considered and rejected:**
-- Provided SDK/wrapper: hides how agents actually work, defeats the pedagogical goal
-- Free-form text parsing (regex): fragile, non-standard, wastes time on parsing bugs
-
-## CLI interface (all tasks)
-
-**Input:** JSON argument with question field
-```bash
-python agent.py '{"question": "What does REST stand for?"}'
-```
-
-**Output:** Single JSON line to stdout
-```json
-{"answer": "Representational State Transfer.", "tool_calls": []}
-```
-
-With tools:
-```json
-{
-  "answer": "The backend uses FastAPI.",
-  "tool_calls": [
-    {"tool": "read_file", "args": {"path": "backend/app/main.py"}, "result": "from fastapi import FastAPI..."}
-  ]
-}
-```
-
-**Rules:**
-- Output must be valid JSON, single line, to stdout
-- `answer` and `tool_calls` fields are required
-- Debug/progress output goes to stderr only
-- 60-second timeout per question
-- Exit code 0 on success
-
-## Required tools
-
-### `read_file`
-Read a file from the project repo. Must restrict to project directory.
-- Parameters: `path` (string) — relative path from project root
-- Returns: file contents or error message
-
-### `list_files`
-List files/directories at a path.
-- Parameters: `path` (string) — relative directory path
-- Returns: newline-separated listing
-
-### `query_api`
-Call the deployed backend API.
-- Parameters: `method` (string), `path` (string), `body` (string, optional)
-- Returns: JSON with status_code and body
-- Must handle authentication (API key from env/config)
-
-## Evaluation design
-
-### How it works
-Autochecker SSHes into VM, runs `python agent.py '{"question":"..."}'` for each eval question, parses JSON output, compares answer against expected.
-
-### What students see
-- ✅ green: passed — shows question and their answer (so they learn)
-- ❌ red: failed — shows question, their answer, and expected match criteria
-- Students target one failed question at a time
-
-### Answer matching strategies
-- `contains`: answer contains keyword(s)
-- `regex`: answer matches pattern
-- `numeric_gt` / `numeric_range`: numeric comparison
-- `any_of`: answer contains any listed value
-- `contains_all`: answer contains all listed values
-
-### Tool usage verification
-For `requires_tool` questions, `tool_calls` must be non-empty and include the expected tool.
-
-### Question categories
-- A: Course concepts (no tools) — Git, REST, Docker, SQL, testing, ETL, agents
-- B: HTTP & REST (no tools) — status codes, methods, auth vs authz
-- C: System architecture (read_file) — framework, DB, ORM, ports
-- D: Code inspection (read_file, list_files) — auth mechanism, routers, test framework
-- E: Live system queries (query_api) — item count, status codes, endpoint behavior
-- F: Data analysis (query_api + reasoning) — scores, pass rates, groups
-
-### Difficulty tiers
-- Tier 1 (after task 1): ~15 basic questions, need ≥8 to pass
-- Tier 2 (after task 2): ~12 tool questions, need ≥7 to pass
-- Tier 3 (after task 3): all ~34 questions, need ≥26 (75%) to pass
+> 1. Build a CLI that takes a question, calls an LLM, and returns a JSON answer — the basic agent loop.
+> 2. Give the agent tools to read your codebase and query your API — so it can answer questions about your actual system.
+> 3. Iterate until the agent passes the evaluation benchmark — each failure teaches you something about agents or course material.
 
 ## Required tasks
 
-### Setup — Deploy Your System
-
-Students deploy their completed lab 5 system on their VM. The autochecker verifies SSH access, API reachability, and that the database has data.
-
 ### Task 1 — Basic Agent Loop
 
-Build `agent.py` CLI with: JSON input parsing → LLM API call (OpenRouter) → system prompt with course knowledge → JSON output. No tools yet. Tier 1 eval runs.
+**Purpose:**
 
-**Commit:** `feat: implement basic agent loop with LLM integration`
+Build the foundation — a working CLI that calls an LLM and returns structured answers.
+
+**Summary:**
+
+Students create `agent.py` in the project root. The CLI accepts a plain string question as a command-line argument and outputs a JSON object with `answer` and `tool_calls` fields to stdout. All debug output goes to stderr.
+
+Students choose an LLM provider (OpenRouter recommended for zero-cost access) and write a system prompt with course knowledge. The system prompt is the primary way the agent answers tier 1 questions that require no tools. Students write a plan before coding, document their architecture in AGENT.md, and create five regression tests.
+
+The agent must work on the VM via SSH. At this stage, `tool_calls` is always an empty array because no tools are implemented yet.
+
+**Acceptance criteria:**
+
+- `agent.py` runs on the VM and exits with code 0.
+- Output is valid JSON with `answer` and `tool_calls` fields.
+- Plan and documentation files are committed before the agent code.
+- At least five regression tests pass.
+- PR is approved and merged, closing the linked issue.
+
+---
 
 ### Task 2 — Add Tools
 
-Implement `read_file`, `list_files`, `query_api` tools with JSON schemas. Build the agent loop: LLM → detect tool_calls → execute → send result back → repeat. Tier 2 eval runs.
+**Purpose:**
 
-**Commit:** `feat: add tool calling (read_file, list_files, query_api)`
+Implement the agentic loop with tools that let the agent inspect its own codebase and query the running API.
+
+**Summary:**
+
+Students implement three tools: `read_file` (reads a file from the project directory), `list_files` (lists directory contents), and `query_api` (makes HTTP requests to the deployed backend). Each tool is defined as a JSON schema in the `tools` parameter of the LLM API request.
+
+Students build the agentic loop: call the LLM, check if it requests a tool call, execute the tool, send the result back as a `tool` role message, and repeat until the LLM produces a final text answer. A maximum of 10 iterations prevents infinite loops. File tools are restricted to the project directory for security. The `query_api` tool authenticates using `LMS_API_KEY` from the environment.
+
+Students update their plan, documentation, and tests. The agent must handle tool-based evaluation questions.
+
+**Acceptance criteria:**
+
+- All three tools are implemented and appear in the agent's tool schemas.
+- The agentic loop executes tool calls and feeds results back to the LLM.
+- Tool-based evaluation questions return correct answers.
+- At least five new regression tests verify tool usage.
+- PR is approved and merged, closing the linked issue.
+
+---
 
 ### Task 3 — Pass the Benchmark
 
-Iterate until the full eval passes (≥75%). Debug one question at a time: fix prompts, improve tool descriptions, handle edge cases.
+**Purpose:**
 
-**Commit:** `feat: optimize agent to pass evaluation benchmark`
+Iterate on the agent until it passes the full evaluation benchmark, learning course material and agent debugging along the way.
 
-## Student workflow
+**Summary:**
 
-```
-1. Write/modify agent code
-2. Test locally: python agent.py '{"question": "..."}'
-3. Examine output — correct?
-   ├── Yes → try another
-   └── No → diagnose:
-       ├── Wrong knowledge → fix system prompt
-       ├── Tool not called → fix tool description
-       ├── Tool error → fix tool implementation
-       └── Wrong reasoning → improve prompts
-4. Push code, run autochecker
-5. See eval results (green/red)
-6. Pick one failed question → go to 1
-```
+Students run `python run_eval.py` to test their agent against 25 questions fetched from the autochecker API. The script stops at the first failure, showing the question, the agent's answer, and the expected match criteria. Students diagnose each failure (wrong knowledge, missing tool call, broken tool, bad prompt phrasing) and fix it.
 
-## Open questions
+Common fixes include expanding the system prompt, improving tool descriptions so the LLM calls the right tool, fixing tool implementations, and handling edge cases. Students document their initial score, diagnosis of failures, and iteration strategy in a plan file. After passing all 25 local questions, they deploy and run the autochecker bot which tests 34 questions total (25 shared plus 9 never-seen extras).
 
-1. Should we provide a starter `agent.py` skeleton? Leaning yes — minimal argparse + main, not the LLM call.
-2. Should we share ~5 sample questions for local testing? Leaning yes — tier 1 only.
-3. Maximum agent loop iterations? Leaning 10 tool calls per question.
-4. Does the agent code live in the project root or a subdirectory? Leaning root.
+Students update AGENT.md with the final architecture, lessons learned, and evaluation score.
+
+**Acceptance criteria:**
+
+- `run_eval.py` passes all 25 questions locally.
+- The autochecker bot benchmark passes at least 75% (26 out of 34 questions).
+- AGENT.md documents final architecture and lessons learned.
+- Regression tests are updated with benchmark edge cases.
+- PR is approved and merged, closing the linked issue.
+
+---
+
+## Optional task
+
+### Task 1 — Advanced Agent Features
+
+**Purpose:**
+
+Extend the agent with advanced capabilities that improve reliability or expand what it can answer.
+
+**Summary:**
+
+Students choose one or more extensions to implement: retry logic with exponential backoff for rate-limited LLM APIs, a caching layer that avoids re-calling tools for repeated questions, a `query_db` tool that runs read-only SQL queries against the PostgreSQL database directly, or multi-step reasoning where the agent plans its approach before executing tools.
+
+Students document their chosen extension in a plan, implement it, and write tests that demonstrate the improvement. The extension should measurably improve the agent — either by increasing the pass rate on edge cases, reducing latency, or handling failure modes gracefully.
+
+**Acceptance criteria:**
+
+- At least one extension is implemented and documented.
+- Tests demonstrate the extension works correctly.
+- AGENT.md is updated to describe the extension.
+- PR is approved and merged, closing the linked issue.
